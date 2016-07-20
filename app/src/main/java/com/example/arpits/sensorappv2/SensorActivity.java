@@ -42,6 +42,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private long startTime;
     private long minTimeDiff;
     private boolean screenTapped;
+    private double x, y, z;
+    private TextView tvazi, tvpitch, tvroll, tvTime;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -54,6 +56,11 @@ public class SensorActivity extends Activity implements SensorEventListener {
         state = State.DONE;
         minTimeDiff = 99999;
         screenTapped = false;
+
+        tvazi = (TextView)findViewById(R.id.tvazimuth);
+        tvpitch = (TextView)findViewById(R.id.tvpitch);
+        tvroll = (TextView)findViewById(R.id.tvroll);
+        tvTime = (TextView)findViewById(R.id.tvTime);
 
     }
 
@@ -84,9 +91,78 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (event.getAction() == MotionEvent.ACTION_DOWN)
+        if (event.getAction() == MotionEvent.ACTION_DOWN) {
             screenTapped = true;
+            loop();
+        }
         return true;
+    }
+
+    public void loop() {
+        switch (state) {
+            case PREMATURE:
+            case MISSED:
+            case DONE:
+                // handle transition first
+                if (y < -9.0) {
+                    // move to charging
+                    state = State.CHARGING;
+                    getWindow().getDecorView().setBackgroundColor(Color.RED);
+                    currentTask = new TimerTask() {
+                        synchronized public void run() {
+                            state = State.JUST_CHARGED;
+                        }
+                    };
+                    timer.schedule(currentTask, 1000);
+                }
+                // other stuff (nothing really?)
+
+                break;
+            case CHARGING:
+                // handle transition first
+                // if shaking happens, or not vertical enough, invalidate trial.
+                float[] a = mAccelerometer;
+                float accMagSq = 9;
+                if (a != null) {
+                    accMagSq = a[0]*a[0] + a[1]*a[1] + a[2]*a[2];
+                }
+                if (y > -7.0 || accMagSq > 15*15 || accMagSq < 4*4) {
+                    // go to premature state, with color yellow.
+                    currentTask.cancel();
+                    state = State.PREMATURE;
+                    getWindow().getDecorView().setBackgroundColor(Color.YELLOW);
+                }
+                // other stuff (nothing really)
+                break;
+            case JUST_CHARGED:
+                // do cleanup and move to charged
+                getWindow().getDecorView().setBackgroundColor(Color.GREEN);
+                Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+                v.vibrate(100);
+                startTime = System.currentTimeMillis();
+                state = State.CHARGED;
+                break;
+            case CHARGED:
+                // handle transition first
+                // as horizontal is crossed, transition over to Done
+                // and print the shot time! (no tapping for now.)
+                if (y > 0.0 && screenTapped) {
+                    // move to done
+                    long nowTime = System.currentTimeMillis();
+                    state = State.DONE;
+                    getWindow().getDecorView().setBackgroundColor(Color.BLUE);
+                    tvTime.setText((nowTime - startTime) + "");
+                } else if (screenTapped) {
+                    // move to missed
+                    getWindow().getDecorView().setBackgroundColor(Color.YELLOW);
+                    state = State.MISSED;
+                }
+                // other stuff (nothing really)
+                break;
+
+        }
+        // make screenTapped false, so that same event doesn't run twice in switch
+        screenTapped = false;
     }
 
     public void onSensorChanged(SensorEvent event) {
@@ -105,83 +181,17 @@ public class SensorActivity extends Activity implements SensorEventListener {
         tvState.setText(state.toString());
 
         if (event.sensor.getType() == Sensor.TYPE_GRAVITY) {
-            double x = event.values[0];
-            double y = event.values[1];
-            double z = event.values[2];
-            TextView tvazi = (TextView)findViewById(R.id.tvazimuth);
-            TextView tvpitch = (TextView)findViewById(R.id.tvpitch);
-            TextView tvroll = (TextView)findViewById(R.id.tvroll);
-            TextView tvTime = (TextView)findViewById(R.id.tvTime);
+            x = event.values[0];
+            y = event.values[1];
+            z = event.values[2];
 
             tvazi.setText(x + "");
             tvpitch.setText(y + "");
             tvroll.setText(z + "");
+            loop();
 
-            switch (state) {
-                case PREMATURE:
-                case MISSED:
-                case DONE:
-                    // handle transition first
-                    if (y < -9.0) {
-                        // move to charging
-                        state = State.CHARGING;
-                        getWindow().getDecorView().setBackgroundColor(Color.RED);
-                        currentTask = new TimerTask() {
-                            synchronized public void run() {
-                                state = State.JUST_CHARGED;
-                            }
-                        };
-                        timer.schedule(currentTask, 1000);
-                    }
-                    // other stuff (nothing really?)
-
-                    break;
-                case CHARGING:
-                    // handle transition first
-                    // if shaking happens, or not vertical enough, invalidate trial.
-                    float[] a = mAccelerometer;
-                    float accMagSq = 9;
-                    if (a != null) {
-                        accMagSq = a[0]*a[0] + a[1]*a[1] + a[2]*a[2];
-                    }
-                    if (y > -7.0 || accMagSq > 15*15 || accMagSq < 4*4) {
-                        // go to premature state, with color yellow.
-                        currentTask.cancel();
-                        state = State.PREMATURE;
-                        getWindow().getDecorView().setBackgroundColor(Color.YELLOW);
-                    }
-                    // other stuff (nothing really)
-                    break;
-                case JUST_CHARGED:
-                    // do cleanup and move to charged
-                    getWindow().getDecorView().setBackgroundColor(Color.GREEN);
-                    Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
-                    v.vibrate(100);
-                    startTime = System.currentTimeMillis();
-                    state = State.CHARGED;
-                    break;
-                case CHARGED:
-                    // handle transition first
-                    // as horizontal is crossed, transition over to Done
-                    // and print the shot time! (no tapping for now.)
-                    if (y > 0.0 && screenTapped) {
-                        // move to done
-                        long nowTime = System.currentTimeMillis();
-                        state = State.DONE;
-                        getWindow().getDecorView().setBackgroundColor(Color.BLUE);
-                        tvTime.setText((nowTime - startTime) + "");
-                    } else if (screenTapped) {
-                        // move to missed
-                        getWindow().getDecorView().setBackgroundColor(Color.YELLOW);
-                        state = State.MISSED;
-                    }
-                    // other stuff (nothing really)
-                    break;
-
-            }
         }
-        // make screenTapped false, so that same event doesn't run twice in switch
-        screenTapped = false;
+
 //        if (mAccelerometer != null && mGeomagnetic != null) {
 //            float RR[] = new float[9];
 //            float I[] = new float[9];
