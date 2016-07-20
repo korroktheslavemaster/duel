@@ -9,6 +9,7 @@ import android.hardware.SensorManager;
 import android.os.Vibrator;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
 
@@ -53,6 +54,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
         state = State.DONE;
         minTimeDiff = 99999;
         screenTapped = false;
+
     }
 
     public SensorActivity() {
@@ -79,9 +81,14 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
     }
-    public void screenTapped(View view) {
-        screenTapped = true;
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        if (event.getAction() == MotionEvent.ACTION_DOWN)
+            screenTapped = true;
+        return true;
     }
+
     public void onSensorChanged(SensorEvent event) {
         //Right in here is where you put code to read the current sensor values and
         //update any views you might have that are displaying the sensor information
