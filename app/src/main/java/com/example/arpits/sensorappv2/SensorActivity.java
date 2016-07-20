@@ -9,6 +9,7 @@ import android.hardware.SensorManager;
 import android.os.Vibrator;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.View;
 import android.widget.TextView;
 
 import java.util.Timer;
@@ -32,14 +33,14 @@ public class SensorActivity extends Activity implements SensorEventListener {
     public static float[] mAccelerometer = null;
     public static float[] mGeomagnetic = null;
     public enum State {
-        CHARGING, JUST_CHARGED, CHARGED, DONE
+        CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED
     }
     private Timer timer;
     private TimerTask currentTask;
     private State state;
     private long startTime;
     private long minTimeDiff;
-
+    private boolean screenTapped;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -51,6 +52,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
         timer = new Timer();
         state = State.DONE;
         minTimeDiff = 99999;
+        screenTapped = false;
     }
 
     public SensorActivity() {
@@ -77,7 +79,9 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
     }
-
+    public void screenTapped(View view) {
+        screenTapped = true;
+    }
     public void onSensorChanged(SensorEvent event) {
         //Right in here is where you put code to read the current sensor values and
         //update any views you might have that are displaying the sensor information
@@ -107,6 +111,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
             tvroll.setText(z + "");
 
             switch (state) {
+                case MISSED:
                 case DONE:
                     // handle transition first
                     if (y < -9.0) {
@@ -151,18 +156,24 @@ public class SensorActivity extends Activity implements SensorEventListener {
                     // handle transition first
                     // as horizontal is crossed, transition over to Done
                     // and print the shot time! (no tapping for now.)
-                    if (y > 0.0) {
+                    if (y > 0.0 && screenTapped) {
                         // move to done
                         long nowTime = System.currentTimeMillis();
                         state = State.DONE;
                         getWindow().getDecorView().setBackgroundColor(Color.BLUE);
                         tvTime.setText((nowTime - startTime) + "");
+                    } else if (screenTapped) {
+                        // move to missed
+                        getWindow().getDecorView().setBackgroundColor(Color.YELLOW);
+                        state = State.MISSED;
                     }
                     // other stuff (nothing really)
                     break;
+
             }
         }
-
+        // make screenTapped false, so that same event doesn't run twice in switch
+        screenTapped = false;
 //        if (mAccelerometer != null && mGeomagnetic != null) {
 //            float RR[] = new float[9];
 //            float I[] = new float[9];
