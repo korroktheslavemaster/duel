@@ -33,7 +33,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
     public static float[] mAccelerometer = null;
     public static float[] mGeomagnetic = null;
     public enum State {
-        CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED
+        CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED, PREMATURE
     }
     private Timer timer;
     private TimerTask currentTask;
@@ -111,6 +111,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
             tvroll.setText(z + "");
 
             switch (state) {
+                case PREMATURE:
                 case MISSED:
                 case DONE:
                     // handle transition first
@@ -137,9 +138,9 @@ public class SensorActivity extends Activity implements SensorEventListener {
                         accMagSq = a[0]*a[0] + a[1]*a[1] + a[2]*a[2];
                     }
                     if (y > -7.0 || accMagSq > 15*15 || accMagSq < 4*4) {
-                        // go to done state, with color yellow.
+                        // go to premature state, with color yellow.
                         currentTask.cancel();
-                        state = State.DONE;
+                        state = State.PREMATURE;
                         getWindow().getDecorView().setBackgroundColor(Color.YELLOW);
                     }
                     // other stuff (nothing really)
