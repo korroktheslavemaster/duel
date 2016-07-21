@@ -2,6 +2,8 @@ package com.example.arpits.sensorappv2;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothServerSocket;
+import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
@@ -20,7 +22,9 @@ import java.util.Random;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.io.*;
 
 /**
  * Created by arpits on 7/19/16.
@@ -37,8 +41,11 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     public static float[] mAccelerometer = null;
     public enum State {
-        READY, CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED_TOO_LOW, MISSED_TOO_HIGH, PREMATURE, NO_PAIRED_DEVICE
+        READY, CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED_TOO_LOW, MISSED_TOO_HIGH, PREMATURE, NO_PAIRED_DEVICE,
+        WAITING_SERVER, WAITING_CLIENT,
+        ERROR
     }
+    private String UUIDString = "b57405ce-4f7f-11e6-beb8-9e71128cae77";
     private Timer timer;
     private TimerTask currentTask;
     private State state;
@@ -50,7 +57,9 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private TextView tvazi, tvpitch, tvroll, tvTime;
     public static int BLUETOOTH_REQUEST=1;
     private BluetoothDevice pairedDevice;
-
+    private boolean amMaster;
+    private BluetoothServerSocket mServerSocket;
+    private BluetoothSocket socket;
     protected void onActivityResult(int requestCode, int resultCode,
                                     Intent data) {
         if (requestCode == BLUETOOTH_REQUEST) {
@@ -61,11 +70,17 @@ public class SensorActivity extends Activity implements SensorEventListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        state = State.DONE;
         setContentView(R.layout.activity_main);
         mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
         accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         gravitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        tvazi = (TextView)findViewById(R.id.tvazimuth);
+        tvpitch = (TextView)findViewById(R.id.tvpitch);
+        tvroll = (TextView)findViewById(R.id.tvroll);
+        tvTime = (TextView)findViewById(R.id.tvTime);
+
         if (mBluetoothAdapter == null) {
             // Device does not support Bluetooth
         }
@@ -74,6 +89,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
             startActivityForResult(enableBtIntent, BLUETOOTH_REQUEST);
         }
         Set<BluetoothDevice> pairedDevices = mBluetoothAdapter.getBondedDevices();
+        amMaster = false;
         // If there are paired devices
         if (pairedDevices.size() == 0) {
             state = State.NO_PAIRED_DEVICE;
@@ -84,17 +100,38 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 ((TextView)findViewById((R.id.tvDevice))).setText(pairedDevice.getName());
                 break;
             }
+            amMaster = false;
+            String myBTID = android.provider.Settings.Secure.getString(this.getApplicationContext().getContentResolver(), "bluetooth_address");
+            tvTime.setText(myBTID);
+            if (myBTID.compareTo(pairedDevice.getAddress()) > 0) {
+                amMaster = true;
+                // do master init stuff
+                BluetoothServerSocket tmp = null;
+                try {
+                    // MY_UUID is the app's UUID string, also used by the client code
+                    tmp = mBluetoothAdapter.listenUsingRfcommWithServiceRecord("Duel", UUID.fromString(UUIDString));
+                } catch (IOException e) { }
+                mServerSocket = tmp;
+                state = State.WAITING_SERVER;
+            } else {
+                // do slave init stuff
+                BluetoothSocket tmp = null;
+                try {
+                    // MY_UUID is the app's UUID string, also used by the server code
+                    tmp = pairedDevice.createRfcommSocketToServiceRecord(UUID.fromString(UUIDString));
+                } catch (IOException e) { }
+                socket = tmp;
+                mBluetoothAdapter.cancelDiscovery();
+                state = State.WAITING_CLIENT;
+            }
+
         }
         otherReady = false;
         timer = new Timer();
-        state = State.DONE;
+
         minTimeDiff = 99999;
         screenTapped = false;
 
-        tvazi = (TextView)findViewById(R.id.tvazimuth);
-        tvpitch = (TextView)findViewById(R.id.tvpitch);
-        tvroll = (TextView)findViewById(R.id.tvroll);
-        tvTime = (TextView)findViewById(R.id.tvTime);
 
     }
 
@@ -132,6 +169,46 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     public void loop() {
         switch (state) {
+            case ERROR:
+                break;
+            case WAITING_SERVER:
+                // if we're here, we're definitely master, right?
+                try {
+                    socket = mServerSocket.accept();
+                } catch (IOException e) {
+                    break;
+                }
+                if (socket != null) {
+                    // yay
+                    try {
+                        mServerSocket.close();
+                    } catch(IOException e) {}
+                    state = State.DONE;
+                }
+                break;
+            case WAITING_CLIENT:
+                try {
+                    // Connect the device through the socket. This will block
+                    // until it succeeds or throws an exception
+                    socket.connect();
+                    state = State.DONE;
+                } catch (IOException connectException) {
+                    // Unable to connect; close the socket and get out
+                    try {
+                        socket.close();
+                    } catch (IOException closeException) { }
+
+                    socket = null;
+                    BluetoothSocket tmp = null;
+                    try {
+                        // MY_UUID is the app's UUID string, also used by the server code
+                        tmp = pairedDevice.createRfcommSocketToServiceRecord(UUID.fromString(UUIDString));
+                    } catch (IOException e) { }
+                    socket = tmp;
+                    return;
+                }
+
+                break;
             case NO_PAIRED_DEVICE:
                 // maybe should look for pairing?
                 break;
