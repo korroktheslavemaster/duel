@@ -26,21 +26,18 @@ import java.util.concurrent.TimeUnit;
  * Created by arpits on 7/19/16.
  */
 public class SensorActivity extends Activity implements SensorEventListener {
-    public static float swRoll;
-    public static float swPitch;
-    public static float swAzimuth;
 
 
     public static SensorManager mSensorManager;
     public static Sensor accelerometer;
-//    public static Sensor magnetometer;
     public static Sensor gravitySensor;
     public static BluetoothAdapter mBluetoothAdapter;
+    public static double MISS_LOW_THRESH = -2.0;
+    public static double MISS_HIGH_THRESH = 3.0;
 
     public static float[] mAccelerometer = null;
-//    public static float[] mGeomagnetic = null;
     public enum State {
-        CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED, PREMATURE, NO_PAIRED_DEVICE
+        READY, CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED_TOO_LOW, MISSED_TOO_HIGH, PREMATURE, NO_PAIRED_DEVICE
     }
     private Timer timer;
     private TimerTask currentTask;
@@ -48,6 +45,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private long startTime;
     private long minTimeDiff;
     private boolean screenTapped;
+    private boolean otherReady;
     private double x, y, z;
     private TextView tvazi, tvpitch, tvroll, tvTime;
     public static int BLUETOOTH_REQUEST=1;
@@ -66,7 +64,6 @@ public class SensorActivity extends Activity implements SensorEventListener {
         setContentView(R.layout.activity_main);
         mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
         accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-//        magnetometer = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
         gravitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         if (mBluetoothAdapter == null) {
@@ -84,10 +81,11 @@ public class SensorActivity extends Activity implements SensorEventListener {
             // get first item from set
             for( BluetoothDevice device: pairedDevices) {
                 pairedDevice = device;
+                ((TextView)findViewById((R.id.tvDevice))).setText(pairedDevice.getName());
                 break;
             }
         }
-
+        otherReady = false;
         timer = new Timer();
         state = State.DONE;
         minTimeDiff = 99999;
@@ -110,7 +108,6 @@ public class SensorActivity extends Activity implements SensorEventListener {
         super.onResume();
 
         mSensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME);
-//        mSensorManager.registerListener(this, magnetometer, SensorManager.SENSOR_DELAY_GAME);
         mSensorManager.registerListener(this, gravitySensor, SensorManager.SENSOR_DELAY_FASTEST);
     }
 
@@ -118,7 +115,6 @@ public class SensorActivity extends Activity implements SensorEventListener {
     protected void onPause() {
         super.onPause();
         mSensorManager.unregisterListener(this, accelerometer);
-//        mSensorManager.unregisterListener(this, magnetometer);
         mSensorManager.unregisterListener(this, gravitySensor);
     }
 
@@ -140,24 +136,35 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 // maybe should look for pairing?
                 break;
             case PREMATURE:
-            case MISSED:
+            case MISSED_TOO_LOW:
+            case MISSED_TOO_HIGH:
             case DONE:
                 // handle transition first
                 if (y < -9.0) {
-                    // move to charging
-                    state = State.CHARGING;
-                    getWindow().getDecorView().setBackgroundColor(Color.RED);
-                    currentTask = new TimerTask() {
-                        synchronized public void run() {
-                            state = State.JUST_CHARGED;
-                        }
-                    };
-                    // shootout will begin in 1-3 seconds. keep guessing
-                    timer.schedule(currentTask, new Random().nextInt(3000-1000)+1000);
+                    state = State.READY;
                 }
                 // other stuff (nothing really?)
 
                 break;
+            case READY:
+                // handle transition first
+                // if angle changes, move back to done.
+                if (y > -7.0) {
+                    state = State.DONE;
+                    getWindow().getDecorView().setBackgroundColor(Color.BLUE);
+                }
+                // if we get signal, move to charging
+                state = State.CHARGING;
+                getWindow().getDecorView().setBackgroundColor(Color.RED);
+                currentTask = new TimerTask() {
+                    synchronized public void run() {
+                        state = State.JUST_CHARGED;
+                    }
+                };
+                // shootout will begin in 1-3 seconds. keep guessing
+                timer.schedule(currentTask, new Random().nextInt(3000-1000)+1000);
+                break;
+
             case CHARGING:
                 // handle transition first
                 // if shaking happens, or not vertical enough, invalidate trial.
@@ -166,7 +173,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 if (a != null) {
                     accMagSq = a[0]*a[0] + a[1]*a[1] + a[2]*a[2];
                 }
-                if (y > -7.0 || accMagSq > 15*15 || accMagSq < 4*4) {
+                // removing acceleration condition, seems pointless
+                if (y > -7.0 /*|| accMagSq > 15*15 || accMagSq < 4*4*/) {
                     // go to premature state, with color yellow.
                     currentTask.cancel();
                     state = State.PREMATURE;
@@ -186,7 +194,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 // handle transition first
                 // as horizontal is crossed, transition over to Done
                 // and print the shot time! (no tapping for now.)
-                if (y > 0.0 && screenTapped) {
+                // changing this to an angle threshold around 0
+                if (y > MISS_LOW_THRESH && y < MISS_HIGH_THRESH && screenTapped) {
                     // move to done
                     long nowTime = System.currentTimeMillis();
                     state = State.DONE;
@@ -195,7 +204,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 } else if (screenTapped) {
                     // move to missed
                     getWindow().getDecorView().setBackgroundColor(Color.YELLOW);
-                    state = State.MISSED;
+                    state = y <= MISS_LOW_THRESH? State.MISSED_TOO_LOW: State.MISSED_TOO_HIGH;
                 }
                 // other stuff (nothing really)
                 break;
@@ -213,10 +222,6 @@ public class SensorActivity extends Activity implements SensorEventListener {
             mAccelerometer = event.values;
         }
 
-//        if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
-//            mGeomagnetic = event.values;
-//        }
-
         TextView tvState = (TextView)findViewById(R.id.tvState);
         tvState.setText(state.toString());
 
@@ -232,84 +237,6 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
         }
 
-//        if (mAccelerometer != null && mGeomagnetic != null) {
-//            float RR[] = new float[9];
-//            float I[] = new float[9];
-//            boolean success = SensorManager.getRotationMatrix(RR, I, mAccelerometer, mGeomagnetic);
-//
-//            if (success) {
-//                float orientation[] = new float[3];
-//                SensorManager.getOrientation(RR, orientation);
-//                // at this point, orientation contains the azimuth(direction), pitch and roll values.
-//                double azimuth = 180 * orientation[0] / Math.PI;
-//                double pitch = 180 * orientation[1] / Math.PI;
-//                double roll = 180 * orientation[2] / Math.PI;
-//
-//                TextView tvazi = (TextView)findViewById(R.id.tvazimuth);
-//                TextView tvpitch = (TextView)findViewById(R.id.tvpitch);
-//                TextView tvroll = (TextView)findViewById(R.id.tvroll);
-//                TextView tvTime = (TextView)findViewById(R.id.tvTime);
-//
-//                tvazi.setText(azimuth + "");
-//                tvpitch.setText(pitch + "");
-//                tvroll.setText(roll + "");
-//
-//                int newState = state;
-//                if (pitch > 75)
-//                    newState = 0;
-//                else if (pitch < 10)
-//                    newState = 1;
-//
-//                if (state != newState) {
-//                    state = newState;
-//                    if (state == 0)
-//                        startTime = System.currentTimeMillis();
-//                    else if (state == 1) {
-//                        long nowTime = System.currentTimeMillis();
-//                        long diff = nowTime - startTime;
-//                        tvTime.setText(diff + "");
-//                        minTimeDiff = Math.min(minTimeDiff, diff);
-//                    }
-//                    getWindow().getDecorView().setBackgroundColor(colors[state]);
-//
-//                }
-//
-//            }
-//        }
-//        float mSensorX, mSensorY;
-//        mSensorX = event.values[0];
-//        mSensorY = event.values[1];
-//        int newState = state;
-//        if (mSensorY < -8.5)
-//            newState = 0;
-//        else if (mSensorY > 0)
-//            newState = 1;
-//        if (newState != state) {
-//            state = newState;
-//            getWindow().getDecorView().setBackgroundColor(colors[state]);
-//        }
-//
-//        TextView tvx = (TextView)findViewById(R.id.xAccTextView);
-//        TextView tvy = (TextView)findViewById(R.id.yAccTextView);
-//        tvx.setText(mSensorX+"");
-//        tvy.setText(mSensorY+"");
-//        switch (mDisplay.getRotation()) {
-//            case Surface.ROTATION_0:
-//                mSensorX = event.values[0];
-//                mSensorY = event.values[1];
-//                break;
-//            case Surface.ROTATION_90:
-//                mSensorX = -event.values[1];
-//                mSensorY = event.values[0];
-//                break;
-//            case Surface.ROTATION_180:
-//                mSensorX = -event.values[0];
-//                mSensorY = -event.values[1];
-//                break;
-//            case Surface.ROTATION_270:
-//                mSensorX = event.values[1];
-//                mSensorY = -event.values[0];
-//        }
     }
 }
 
