@@ -13,6 +13,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
 
+import java.util.Random;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
@@ -28,11 +29,11 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     public static SensorManager mSensorManager;
     public static Sensor accelerometer;
-    public static Sensor magnetometer;
+//    public static Sensor magnetometer;
     public static Sensor gravitySensor;
 
     public static float[] mAccelerometer = null;
-    public static float[] mGeomagnetic = null;
+//    public static float[] mGeomagnetic = null;
     public enum State {
         CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED, PREMATURE
     }
@@ -50,7 +51,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
         setContentView(R.layout.activity_main);
         mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
         accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-        magnetometer = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+//        magnetometer = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
         gravitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
         timer = new Timer();
         state = State.DONE;
@@ -74,7 +75,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
         super.onResume();
 
         mSensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_GAME);
-        mSensorManager.registerListener(this, magnetometer, SensorManager.SENSOR_DELAY_GAME);
+//        mSensorManager.registerListener(this, magnetometer, SensorManager.SENSOR_DELAY_GAME);
         mSensorManager.registerListener(this, gravitySensor, SensorManager.SENSOR_DELAY_FASTEST);
     }
 
@@ -82,7 +83,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
     protected void onPause() {
         super.onPause();
         mSensorManager.unregisterListener(this, accelerometer);
-        mSensorManager.unregisterListener(this, magnetometer);
+//        mSensorManager.unregisterListener(this, magnetometer);
         mSensorManager.unregisterListener(this, gravitySensor);
     }
 
@@ -113,7 +114,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
                             state = State.JUST_CHARGED;
                         }
                     };
-                    timer.schedule(currentTask, 1000);
+                    // shootout will begin in 1-3 seconds. keep guessing
+                    timer.schedule(currentTask, new Random().nextInt(3000-1000)+1000);
                 }
                 // other stuff (nothing really?)
 
@@ -173,9 +175,9 @@ public class SensorActivity extends Activity implements SensorEventListener {
             mAccelerometer = event.values;
         }
 
-        if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
-            mGeomagnetic = event.values;
-        }
+//        if (event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD) {
+//            mGeomagnetic = event.values;
+//        }
 
         TextView tvState = (TextView)findViewById(R.id.tvState);
         tvState.setText(state.toString());
