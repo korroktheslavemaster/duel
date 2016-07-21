@@ -1,6 +1,9 @@
 package com.example.arpits.sensorappv2;
 import android.app.Activity;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -14,6 +17,7 @@ import android.view.View;
 import android.widget.TextView;
 
 import java.util.Random;
+import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.TimeUnit;
@@ -31,11 +35,12 @@ public class SensorActivity extends Activity implements SensorEventListener {
     public static Sensor accelerometer;
 //    public static Sensor magnetometer;
     public static Sensor gravitySensor;
+    public static BluetoothAdapter mBluetoothAdapter;
 
     public static float[] mAccelerometer = null;
 //    public static float[] mGeomagnetic = null;
     public enum State {
-        CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED, PREMATURE
+        CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED, PREMATURE, NO_PAIRED_DEVICE
     }
     private Timer timer;
     private TimerTask currentTask;
@@ -45,6 +50,16 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private boolean screenTapped;
     private double x, y, z;
     private TextView tvazi, tvpitch, tvroll, tvTime;
+    public static int BLUETOOTH_REQUEST=1;
+    private BluetoothDevice pairedDevice;
+
+    protected void onActivityResult(int requestCode, int resultCode,
+                                    Intent data) {
+        if (requestCode == BLUETOOTH_REQUEST) {
+            if (resultCode == RESULT_CANCELED)
+                this.finishAffinity();
+        }
+    }
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -53,6 +68,26 @@ public class SensorActivity extends Activity implements SensorEventListener {
         accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
 //        magnetometer = mSensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
         gravitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (mBluetoothAdapter == null) {
+            // Device does not support Bluetooth
+        }
+        if (!mBluetoothAdapter.isEnabled()) {
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(enableBtIntent, BLUETOOTH_REQUEST);
+        }
+        Set<BluetoothDevice> pairedDevices = mBluetoothAdapter.getBondedDevices();
+        // If there are paired devices
+        if (pairedDevices.size() == 0) {
+            state = State.NO_PAIRED_DEVICE;
+        } else {
+            // get first item from set
+            for( BluetoothDevice device: pairedDevices) {
+                pairedDevice = device;
+                break;
+            }
+        }
+
         timer = new Timer();
         state = State.DONE;
         minTimeDiff = 99999;
@@ -101,6 +136,9 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     public void loop() {
         switch (state) {
+            case NO_PAIRED_DEVICE:
+                // maybe should look for pairing?
+                break;
             case PREMATURE:
             case MISSED:
             case DONE:
