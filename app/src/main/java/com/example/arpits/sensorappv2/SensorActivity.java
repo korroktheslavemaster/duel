@@ -11,13 +11,18 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.os.Handler;
+import android.os.Message;
+import android.os.Looper;
 import android.os.Vibrator;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
 
+import java.util.Date;
 import java.util.Random;
 import java.util.Set;
 import java.util.Timer;
@@ -25,7 +30,6 @@ import java.util.TimerTask;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.io.*;
-
 /**
  * Created by arpits on 7/19/16.
  */
@@ -45,6 +49,11 @@ public class SensorActivity extends Activity implements SensorEventListener {
         WAITING_SERVER, WAITING_CLIENT,
         ERROR
     }
+    public enum MessageType {
+        READY, NOT_READY, MISSED, PREMATURE, SHOT, GOCHARGE
+    }
+
+    static MessageType[] mt = MessageType.values();
     private String UUIDString = "b57405ce-4f7f-11e6-beb8-9e71128cae77";
     private Timer timer;
     private TimerTask currentTask;
@@ -52,7 +61,6 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private long startTime;
     private long minTimeDiff;
     private boolean screenTapped;
-    private boolean otherReady;
     private double x, y, z;
     private TextView tvazi, tvpitch, tvroll, tvTime;
     public static int BLUETOOTH_REQUEST=1;
@@ -60,6 +68,12 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private boolean amMaster;
     private BluetoothServerSocket mServerSocket;
     private BluetoothSocket socket;
+    private Handler mHandler;
+    private ConnectedThread cThread;
+    // variables for comm/gameplay?
+    private boolean isOtherReady = false;
+    State otherState;
+
     protected void onActivityResult(int requestCode, int resultCode,
                                     Intent data) {
         if (requestCode == BLUETOOTH_REQUEST) {
@@ -70,6 +84,45 @@ public class SensorActivity extends Activity implements SensorEventListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        mHandler = new Handler() {
+            /*
+             * handleMessage() defines the operations to perform when
+             * the Handler receives a new Message to process.
+             */
+            @Override
+            public void handleMessage(Message inputMessage) {
+                long val = (Long)inputMessage.obj;
+                switch(mt[inputMessage.what]) {
+                    case GOCHARGE:
+                        // move to charging state (we must be slave)
+                        state = State.CHARGING;
+                        getWindow().getDecorView().setBackgroundColor(Color.RED);
+                        currentTask = new TimerTask() {
+                            synchronized public void run() {
+                                state = State.JUST_CHARGED;
+                            }
+                        };
+                        // shootout will begin at the time master sent
+                        long shootoutTime = val;
+                        timer.schedule(currentTask, new Date(shootoutTime) );
+                        break;
+                    case READY:
+                        isOtherReady = true;
+                        break;
+                    case NOT_READY:
+                        isOtherReady = false;
+                        break;
+                    case MISSED:
+                        break;
+                    case PREMATURE:
+                        break;
+                    case SHOT:
+                        break;
+                }
+            }
+        };
+        isOtherReady = false;
+        otherState = State.DONE;
         state = State.DONE;
         setContentView(R.layout.activity_main);
         mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
@@ -126,7 +179,6 @@ public class SensorActivity extends Activity implements SensorEventListener {
             }
 
         }
-        otherReady = false;
         timer = new Timer();
 
         minTimeDiff = 99999;
@@ -184,6 +236,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
                         mServerSocket.close();
                     } catch(IOException e) {}
                     state = State.DONE;
+                    cThread = new ConnectedThread(socket);
+                    cThread.start();
                 }
                 break;
             case WAITING_CLIENT:
@@ -192,6 +246,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
                     // until it succeeds or throws an exception
                     socket.connect();
                     state = State.DONE;
+                    cThread = new ConnectedThread(socket);
+                    cThread.start();
                 } catch (IOException connectException) {
                     // Unable to connect; close the socket and get out
                     try {
@@ -219,6 +275,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 // handle transition first
                 if (y < -9.0) {
                     state = State.READY;
+                    // send the message too! (only need to actually do this if we not master)
+                    cThread.write(MessageType.READY, 0);
                 }
                 // other stuff (nothing really?)
 
@@ -229,17 +287,27 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 if (y > -7.0) {
                     state = State.DONE;
                     getWindow().getDecorView().setBackgroundColor(Color.BLUE);
+                    // send the message too
+                    cThread.write(MessageType.NOT_READY, 0);
                 }
-                // if we get signal, move to charging
-                state = State.CHARGING;
-                getWindow().getDecorView().setBackgroundColor(Color.RED);
-                currentTask = new TimerTask() {
-                    synchronized public void run() {
-                        state = State.JUST_CHARGED;
-                    }
-                };
-                // shootout will begin in 1-3 seconds. keep guessing
-                timer.schedule(currentTask, new Random().nextInt(3000-1000)+1000);
+
+                // if we get signal that other is ready, and we are master, move to charging
+                if (isOtherReady && amMaster) {
+                    state = State.CHARGING;
+                    getWindow().getDecorView().setBackgroundColor(Color.RED);
+                    currentTask = new TimerTask() {
+                        synchronized public void run() {
+                            state = State.JUST_CHARGED;
+                        }
+                    };
+                    // shootout will begin in 1-3 seconds. keep guessing
+                    long shootoutTime = (System.currentTimeMillis()
+                        + new Random().nextInt(3000-1000)+1000);
+                    // send the message to other phone
+                    cThread.write(MessageType.GOCHARGE, shootoutTime);
+                    timer.schedule(currentTask, new Date(shootoutTime) );
+                }
+
                 break;
 
             case CHARGING:
@@ -314,6 +382,69 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
         }
 
+    }
+
+
+    private class ConnectedThread extends Thread {
+        private final BluetoothSocket mmSocket;
+        private final InputStream mmInStream;
+        private final OutputStream mmOutStream;
+
+        public ConnectedThread(BluetoothSocket socket) {
+            mmSocket = socket;
+            InputStream tmpIn = null;
+            OutputStream tmpOut = null;
+
+            // Get the input and output streams, using temp objects because
+            // member streams are final
+            try {
+                tmpIn = socket.getInputStream();
+                tmpOut = socket.getOutputStream();
+            } catch (IOException e) { }
+
+            mmInStream = tmpIn;
+            mmOutStream = tmpOut;
+        }
+
+        public void run() {
+            byte[] buffer = new byte[1024];  // buffer store for the stream
+            int bytes; // bytes returned from read()
+
+            // Keep listening to the InputStream until an exception occurs
+            while (true) {
+                try {
+                    // Read from the InputStream
+                    bytes = mmInStream.read(buffer);
+                    // Send the obtained bytes to the UI activity
+                    // deserialize the message: just split on ' ' and convert to int.
+                    // set first param to 'what', second to 'arg1'
+                    Log.d("stream string", buffer.toString());
+                    String[] strs = buffer.toString().split(" ");
+                    assert(strs.length == 2);
+                    mHandler.obtainMessage(Integer.parseInt(strs[0]), Long.parseLong(strs[1]))
+                            .sendToTarget();
+                } catch (IOException e) {
+                    break;
+                }
+            }
+        }
+
+        /* Call this from the main activity to send data to the remote device */
+        public void write(MessageType type, long val) {
+            try {
+                // serialize the message: make string with two ints
+                // first is MessageType ordinal, second is arg1
+                String str = type.ordinal() + " " + val;
+                mmOutStream.write(str.getBytes());
+            } catch (IOException e) { }
+        }
+
+        /* Call this from the main activity to shutdown the connection */
+        public void cancel() {
+            try {
+                mmSocket.close();
+            } catch (IOException e) { }
+        }
     }
 }
 
