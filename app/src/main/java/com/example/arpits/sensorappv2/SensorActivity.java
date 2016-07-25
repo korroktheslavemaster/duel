@@ -22,6 +22,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
 
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Random;
 import java.util.Set;
@@ -418,8 +419,11 @@ public class SensorActivity extends Activity implements SensorEventListener {
                     // Send the obtained bytes to the UI activity
                     // deserialize the message: just split on ' ' and convert to int.
                     // set first param to 'what', second to 'arg1'
-                    Log.d("stream string", buffer.toString());
-                    String[] strs = buffer.toString().split(" ");
+                    String str = new String(Arrays.copyOfRange(buffer, 0, bytes), "ascii");
+                    Log.d("stream string", str + ", " + str.length());
+                    // DEBUG: don't do anything here, just print out whatever the ufck
+                    // ur receiving.
+                    String[] strs = str.split(" ");
                     assert(strs.length == 2);
                     mHandler.obtainMessage(Integer.parseInt(strs[0]), Long.parseLong(strs[1]))
                             .sendToTarget();
@@ -435,7 +439,10 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 // serialize the message: make string with two ints
                 // first is MessageType ordinal, second is arg1
                 String str = type.ordinal() + " " + val;
-                mmOutStream.write(str.getBytes());
+                byte[] byteArr = str.getBytes("ascii");
+                Log.d("write stream", new String(byteArr, "ascii") + ", " +
+                        byteArr.length);
+                mmOutStream.write(byteArr, 0, byteArr.length);
             } catch (IOException e) { }
         }
 
