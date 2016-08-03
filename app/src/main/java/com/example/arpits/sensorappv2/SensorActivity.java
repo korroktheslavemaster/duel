@@ -14,9 +14,11 @@ import android.hardware.SensorManager;
 import android.nfc.NdefMessage;
 import android.nfc.NdefRecord;
 import android.nfc.NfcAdapter;
+import android.nfc.Tag;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Looper;
+import android.os.Parcelable;
 import android.os.Vibrator;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -50,8 +52,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
 
     public static float[] mAccelerometer = null;
     public enum State {
-        READY, CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED_TOO_LOW, MISSED_TOO_HIGH, PREMATURE, NO_PAIRED_DEVICE,
-        WAITING_SERVER, WAITING_CLIENT,
+        READY, CHARGING, JUST_CHARGED, CHARGED, DONE, MISSED_TOO_LOW, MISSED_TOO_HIGH, PREMATURE,
+        WAITING_NFC, GOT_SOCKET,
         ERROR
     }
     public enum MessageType {
@@ -75,6 +77,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private BluetoothSocket socket;
     private Handler mHandler;
     private ConnectedThread cThread;
+    private Thread thread;
     // variables for comm/gameplay?
     private boolean isOtherReady = false;
 
@@ -91,16 +94,112 @@ public class SensorActivity extends Activity implements SensorEventListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
+        accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        gravitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+
+        if (mBluetoothAdapter == null) {
+            // Device does not support Bluetooth
+        }
+        if (!mBluetoothAdapter.isEnabled()) {
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(enableBtIntent, BLUETOOTH_REQUEST);
+        }
+
+        tvTime = (TextView)findViewById(R.id.tvTime);
+        String myBTID = android.provider.Settings.Secure.getString(
+                this.getApplicationContext().getContentResolver(), "bluetooth_address");
+        tvTime.setText(myBTID);
+
+        state = State.WAITING_NFC;
         if (!NfcAdapter.ACTION_NDEF_DISCOVERED.equals(getIntent().getAction())) {
+            // not started by nfc
             mNfcAdapter = NfcAdapter.getDefaultAdapter(this);
             NdefRecord uriRecord = new NdefRecord(
                     NdefRecord.TNF_EXTERNAL_TYPE ,
-                    "com.example:duelgame".getBytes(Charset.forName("US-ASCII")),
+                    ("com.example:duelgame/" + myBTID).getBytes(Charset.forName("US-ASCII")),
                     new byte[0], new byte[0]);
             NdefMessage message = new NdefMessage(uriRecord);
-            mNfcAdapter.setNdefPushMessage(message ,this);
-        }
+            mNfcAdapter.setNdefPushMessage(message, this);
+            // we act as server
+            BluetoothServerSocket tmp = null;
+            try {
+                // MY_UUID is the app's UUID string, also used by the client code
+                tmp = mBluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord(
+                        "Duel", UUID.fromString(UUIDString));
+            } catch (IOException e) { }
+            mServerSocket = tmp;
+            // should start a thread where accept() will be called.
+            thread = new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        socket = mServerSocket.accept();
+                    } catch (IOException e) {
+                        state = SensorActivity.State.ERROR;
+                    }
+                    if (socket != null) {
+                        // yay
+                        try {
+                            mServerSocket.close();
+                        } catch(IOException e) {}
+                        state = SensorActivity.State.GOT_SOCKET;
+                    }
+                }
+            };
+            thread.start();
+        } else {
+            // we got started by nfc
+//            String btID = "";
+//            Parcelable[] rawMsgs = getIntent().getParcelableArrayExtra(NfcAdapter.EXTRA_NDEF_MESSAGES);
+//            if (rawMsgs != null) {
+//                NdefMessage msgs[] = new NdefMessage[rawMsgs.length];
+//                for (int i = 0; i < rawMsgs.length; i++) {
+//                    msgs[i] = (NdefMessage) rawMsgs[i];
+//                    for (NdefRecord rec: msgs[i].getRecords()) {
+//                        btID += rec.toString();
+//                    }
+//                }
+//            }
+            String btID = getIntent().getDataString();
+            String[] strs = btID.split("/");
+            btID = strs[strs.length - 1];
+            pairedDevice = mBluetoothAdapter.getRemoteDevice(btID);
+            BluetoothSocket tmp = null;
+            try {
+                // MY_UUID is the app's UUID string, also used by the server code
+                tmp = pairedDevice.createInsecureRfcommSocketToServiceRecord(
+                        UUID.fromString(UUIDString));
+            } catch (IOException e) {
+                state = SensorActivity.State.ERROR;
+            }
+            socket = tmp;
+            mBluetoothAdapter.cancelDiscovery();
+            // should start a thread where connect() will be called.
+            thread = new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        // Connect the device through the socket. This will block
+                        // until it succeeds or throws an exception
+                        socket.connect();
+                        state = SensorActivity.State.GOT_SOCKET;
+                    } catch (IOException connectException) {
+                        // Unable to connect; close the socket and get out
+                        try {
+                            socket.close();
+                        } catch (IOException closeException) { }
+                        state = SensorActivity.State.ERROR;
+                        socket = null;
 
+                    }
+                }
+            };
+            thread.start();
+        }
 
         mHandler = new Handler() {
             /*
@@ -141,62 +240,15 @@ public class SensorActivity extends Activity implements SensorEventListener {
         };
         isOtherReady = false;
         otherState = State.DONE;
-        state = State.DONE;
-        setContentView(R.layout.activity_main);
-        mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
-        accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
-        gravitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+
+
         tvazi = (TextView)findViewById(R.id.tvazimuth);
         tvpitch = (TextView)findViewById(R.id.tvpitch);
         tvroll = (TextView)findViewById(R.id.tvroll);
-        tvTime = (TextView)findViewById(R.id.tvTime);
 
-        if (mBluetoothAdapter == null) {
-            // Device does not support Bluetooth
-        }
-        if (!mBluetoothAdapter.isEnabled()) {
-            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-            startActivityForResult(enableBtIntent, BLUETOOTH_REQUEST);
-        }
-        Set<BluetoothDevice> pairedDevices = mBluetoothAdapter.getBondedDevices();
-        amMaster = false;
-        // If there are paired devices
-        if (pairedDevices.size() == 0) {
-            state = State.NO_PAIRED_DEVICE;
-        } else {
-            // get first item from set
-            for( BluetoothDevice device: pairedDevices) {
-                pairedDevice = device;
-                ((TextView)findViewById((R.id.tvDevice))).setText(pairedDevice.getName());
-                break;
-            }
-            amMaster = false;
-            String myBTID = android.provider.Settings.Secure.getString(this.getApplicationContext().getContentResolver(), "bluetooth_address");
-            tvTime.setText(myBTID);
-            if (myBTID.compareTo(pairedDevice.getAddress()) > 0) {
-                amMaster = true;
-                // do master init stuff
-                BluetoothServerSocket tmp = null;
-                try {
-                    // MY_UUID is the app's UUID string, also used by the client code
-                    tmp = mBluetoothAdapter.listenUsingRfcommWithServiceRecord("Duel", UUID.fromString(UUIDString));
-                } catch (IOException e) { }
-                mServerSocket = tmp;
-                state = State.WAITING_SERVER;
-            } else {
-                // do slave init stuff
-                BluetoothSocket tmp = null;
-                try {
-                    // MY_UUID is the app's UUID string, also used by the server code
-                    tmp = pairedDevice.createRfcommSocketToServiceRecord(UUID.fromString(UUIDString));
-                } catch (IOException e) { }
-                socket = tmp;
-                mBluetoothAdapter.cancelDiscovery();
-                state = State.WAITING_CLIENT;
-            }
 
-        }
+
+
         timer = new Timer();
 
         minTimeDiff = 99999;
@@ -241,51 +293,18 @@ public class SensorActivity extends Activity implements SensorEventListener {
         switch (state) {
             case ERROR:
                 break;
-            case WAITING_SERVER:
+
+            case GOT_SOCKET:
+                cThread = new ConnectedThread(socket);
+                cThread.start();
+                state = State.DONE;
+
+            case WAITING_NFC:
                 // if we're here, we're definitely master, right?
-                try {
-                    socket = mServerSocket.accept();
-                } catch (IOException e) {
-                    break;
-                }
-                if (socket != null) {
-                    // yay
-                    try {
-                        mServerSocket.close();
-                    } catch(IOException e) {}
-                    state = State.DONE;
-                    cThread = new ConnectedThread(socket);
-                    cThread.start();
-                }
-                break;
-            case WAITING_CLIENT:
-                try {
-                    // Connect the device through the socket. This will block
-                    // until it succeeds or throws an exception
-                    socket.connect();
-                    state = State.DONE;
-                    cThread = new ConnectedThread(socket);
-                    cThread.start();
-                } catch (IOException connectException) {
-                    // Unable to connect; close the socket and get out
-                    try {
-                        socket.close();
-                    } catch (IOException closeException) { }
-
-                    socket = null;
-                    BluetoothSocket tmp = null;
-                    try {
-                        // MY_UUID is the app's UUID string, also used by the server code
-                        tmp = pairedDevice.createRfcommSocketToServiceRecord(UUID.fromString(UUIDString));
-                    } catch (IOException e) { }
-                    socket = tmp;
-                    return;
-                }
 
                 break;
-            case NO_PAIRED_DEVICE:
-                // maybe should look for pairing?
-                break;
+
+
             case PREMATURE:
             case MISSED_TOO_LOW:
             case MISSED_TOO_HIGH:
