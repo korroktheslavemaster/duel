@@ -11,6 +11,9 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.nfc.NdefMessage;
+import android.nfc.NdefRecord;
+import android.nfc.NfcAdapter;
 import android.os.Handler;
 import android.os.Message;
 import android.os.Looper;
@@ -22,6 +25,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
 
+import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Random;
@@ -73,6 +77,8 @@ public class SensorActivity extends Activity implements SensorEventListener {
     private ConnectedThread cThread;
     // variables for comm/gameplay?
     private boolean isOtherReady = false;
+
+    private NfcAdapter mNfcAdapter;
     State otherState;
 
     protected void onActivityResult(int requestCode, int resultCode,
@@ -85,6 +91,17 @@ public class SensorActivity extends Activity implements SensorEventListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (!NfcAdapter.ACTION_NDEF_DISCOVERED.equals(getIntent().getAction())) {
+            mNfcAdapter = NfcAdapter.getDefaultAdapter(this);
+            NdefRecord uriRecord = new NdefRecord(
+                    NdefRecord.TNF_EXTERNAL_TYPE ,
+                    "com.example:duelgame".getBytes(Charset.forName("US-ASCII")),
+                    new byte[0], new byte[0]);
+            NdefMessage message = new NdefMessage(uriRecord);
+            mNfcAdapter.setNdefPushMessage(message ,this);
+        }
+
+
         mHandler = new Handler() {
             /*
              * handleMessage() defines the operations to perform when
