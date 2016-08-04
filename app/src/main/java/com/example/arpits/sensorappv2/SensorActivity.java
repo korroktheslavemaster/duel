@@ -26,6 +26,7 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.nio.charset.Charset;
 import java.util.Arrays;
@@ -37,9 +38,13 @@ import java.util.TimerTask;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.io.*;
+
+import com.github.tbouron.shakedetector.library.ShakeDetector;
 /**
  * Created by arpits on 7/19/16.
  */
+
+// TODO: add onRestart, onStop, onDestroy, onStart etc.
 public class SensorActivity extends Activity implements SensorEventListener {
 
 
@@ -96,6 +101,14 @@ public class SensorActivity extends Activity implements SensorEventListener {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        ShakeDetector.create(this, new ShakeDetector.OnShakeListener() {
+            @Override
+            public void OnShake() {
+                Toast.makeText(getApplicationContext(), "Device shaken!", Toast.LENGTH_SHORT).show();
+                Log.d("shaken", "Device shaken.");
+            }
+        });
+        ShakeDetector.updateConfiguration((float)1.5, 3);
         mSensorManager = (SensorManager)getSystemService(SENSOR_SERVICE);
         accelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         gravitySensor = mSensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
@@ -138,7 +151,9 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 public void run() {
                     try {
                         socket = mServerSocket.accept();
+                        Log.d("bt", "got the socket as server.");
                     } catch (IOException e) {
+                        Log.d("bt", "server socket exception");
                         state = SensorActivity.State.ERROR;
                     }
                     if (socket != null) {
@@ -147,26 +162,19 @@ public class SensorActivity extends Activity implements SensorEventListener {
                             mServerSocket.close();
                         } catch(IOException e) {}
                         state = SensorActivity.State.GOT_SOCKET;
+                    } else {
+                        Log.d("bt", "server socket is null");
                     }
                 }
             };
             thread.start();
         } else {
             // we got started by nfc
-//            String btID = "";
-//            Parcelable[] rawMsgs = getIntent().getParcelableArrayExtra(NfcAdapter.EXTRA_NDEF_MESSAGES);
-//            if (rawMsgs != null) {
-//                NdefMessage msgs[] = new NdefMessage[rawMsgs.length];
-//                for (int i = 0; i < rawMsgs.length; i++) {
-//                    msgs[i] = (NdefMessage) rawMsgs[i];
-//                    for (NdefRecord rec: msgs[i].getRecords()) {
-//                        btID += rec.toString();
-//                    }
-//                }
-//            }
+
             String btID = getIntent().getDataString();
             String[] strs = btID.split("/");
             btID = strs[strs.length - 1];
+            Log.d("bt", "trying to connect to bt id " + btID);
             pairedDevice = mBluetoothAdapter.getRemoteDevice(btID);
             BluetoothSocket tmp = null;
             try {
@@ -174,6 +182,7 @@ public class SensorActivity extends Activity implements SensorEventListener {
                 tmp = pairedDevice.createInsecureRfcommSocketToServiceRecord(
                         UUID.fromString(UUIDString));
             } catch (IOException e) {
+                Log.d("bt", "could not create paired device socket in client");
                 state = SensorActivity.State.ERROR;
             }
             socket = tmp;
@@ -187,11 +196,14 @@ public class SensorActivity extends Activity implements SensorEventListener {
                         // until it succeeds or throws an exception
                         socket.connect();
                         state = SensorActivity.State.GOT_SOCKET;
+                        Log.d("bt", "got the socket as client.");
                     } catch (IOException connectException) {
                         // Unable to connect; close the socket and get out
+                        Log.d("bt", "client socket error");
                         try {
                             socket.close();
                         } catch (IOException closeException) { }
+                        Log.d("bt", "error on trying to close client socket.");
                         state = SensorActivity.State.ERROR;
                         socket = null;
 
